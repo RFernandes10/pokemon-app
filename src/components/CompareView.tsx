@@ -1,267 +1,333 @@
-import { createPortal } from 'react-dom';
-import { X, Trophy, TrendingUp, TrendingDown, Minus, Crown } from 'lucide-react';
-import type { PokemonDetail } from '../types/pokemon';
+import { useState, useMemo, useCallback, useEffect } from 'react';
+import { usePokemonList } from './hooks/usePokemonList';
+import { useFavorites } from './hooks/useFavorites';
+import { useTheme } from './hooks/useTheme';
+import { useComparison } from './hooks/useComparison';
+import { PokemonCard } from './components/PokemonCard';
+import { SearchBar } from './components/SearchBar';
+import { SkeletonCard } from './components/SkeletonCard';
+import { Pagination } from './components/Pagination';
+import { PokemonModal } from './components/PokemonModal';
+import { TypeFilter } from './components/TypeFilter';
+import { ThemeToggle } from './components/ThemeToggle';
+import { TypeCalculator } from './components/TypeCalculator';
+import { CompareView } from './components/CompareView';
+import { IntroScreen } from './components/IntroScreen';
+import type { PokemonDetail } from './types/pokemon';
+import { Heart, Filter, Calculator, List, Swords, X, PlayCircle, ChevronDown } from 'lucide-react';
 
-interface CompareViewProps {
-    list: PokemonDetail[];
-    onClose: () => void;
-}
+const ITEMS_PER_PAGE = 20;
 
-export function CompareView({ list, onClose }: CompareViewProps) {
-    if (list.length < 2) return null;
+const typeGradients: Record<string, string> = {
+  fire: 'from-red-500 to-orange-500',
+  water: 'from-blue-500 to-cyan-500',
+  grass: 'from-green-500 to-emerald-500',
+  electric: 'from-yellow-400 to-amber-500',
+  psychic: 'from-pink-500 to-rose-500',
+  ice: 'from-cyan-300 to-blue-400',
+  dragon: 'from-purple-600 to-indigo-600',
+  normal: 'from-gray-400 to-slate-400',
+  fighting: 'from-orange-600 to-red-600',
+  poison: 'from-purple-500 to-violet-500',
+  ground: 'from-yellow-600 to-amber-700',
+  flying: 'from-indigo-300 to-blue-500',
+  bug: 'from-lime-500 to-green-500',
+  rock: 'from-yellow-700 to-stone-600',
+  ghost: 'from-indigo-800 to-purple-700',
+  steel: 'from-slate-400 to-gray-500',
+  fairy: 'from-pink-400 to-pink-600',
+  dark: 'from-slate-700 to-gray-800',
+};
 
-    const [p1, p2] = list;
+function App() {
+  const { data: pokemons, loading, error } = usePokemonList();
+  const { favorites, toggleFavorite, isFavorite } = useFavorites();
+  const { theme, toggleTheme } = useTheme();
+  const { compareList, toggleCompare, clearCompare, isComparing } = useComparison();
 
-    // Calcular total de stats
-    const total1 = p1.stats.reduce((acc, s) => acc + s.base_stat, 0);
-    const total2 = p2.stats.reduce((acc, s) => acc + s.base_stat, 0);
-    const winner = total1 > total2 ? p1 : total2 > total1 ? p2 : null;
+  const [showIntro, setShowIntro] = useState(() => localStorage.getItem('pokedex-intro-seen') !== 'true');
+  const [activeTab, setActiveTab] = useState<'pokedex' | 'calculator'>('pokedex');
+  const [showCompare, setShowCompare] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [selectedType, setSelectedType] = useState('all');
+  const [showOnlyFavorites, setShowOnlyFavorites] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [selectedPokemon, setSelectedPokemon] = useState<PokemonDetail | null>(null);
+  const [showMobileFilters, setShowMobileFilters] = useState(false);
 
-    const getStatComparison = (val1: number, val2: number) => {
-        if (val1 > val2) return { winner: 1, diff: val1 - val2, percent: ((val1 - val2) / val2 * 100).toFixed(1) };
-        if (val2 > val1) return { winner: 2, diff: val2 - val1, percent: ((val2 - val1) / val1 * 100).toFixed(1) };
-        return { winner: 0, diff: 0, percent: '0' };
-    };
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, selectedType, showOnlyFavorites]);
 
-    const renderOverlappingBars = (statName: string, val1: number, val2: number, maxVal = 255) => {
-        const comparison = getStatComparison(val1, val2);
-        const width1 = (val1 / maxVal) * 100;
-        const width2 = (val2 / maxVal) * 100;
+  const filteredPokemons = useMemo(() => {
+    return pokemons.filter(p => {
+      const matchesSearch = p.name.toLowerCase().includes(searchTerm.toLowerCase());
+      const matchesType = selectedType === 'all' || p.types.some(t => t.type.name === selectedType);
+      const matchesFavorites = !showOnlyFavorites || favorites.includes(p.id);
+      return matchesSearch && matchesType && matchesFavorites;
+    });
+  }, [pokemons, searchTerm, selectedType, showOnlyFavorites, favorites]);
 
-        const statColorMap: Record<string, string> = {
-            hp: 'bg-rose-500', attack: 'bg-orange-500', defense: 'bg-yellow-500',
-            'special-attack': 'bg-blue-500', 'special-defense': 'bg-indigo-500', speed: 'bg-purple-500'
-        };
-        const barColor = statColorMap[statName] || 'bg-slate-500';
+  const totalPages = Math.ceil(filteredPokemons.length / ITEMS_PER_PAGE);
+  const paginatedPokemons = useMemo(() => {
+    const start = (currentPage - 1) * ITEMS_PER_PAGE;
+    return filteredPokemons.slice(start, start + ITEMS_PER_PAGE);
+  }, [filteredPokemons, currentPage]);
 
-        return (
-            <div className="mb-6 group">
-                <div className="flex justify-between items-center mb-2">
-                    <span className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 w-24">
-                        {statName}
-                    </span>
+  const isNoResults = !loading && filteredPokemons.length === 0;
+  const isFavoritesEmpty = showOnlyFavorites && favorites.length === 0;
 
-                    {/* Valores com destaque */}
-                    <div className="flex items-center gap-3 flex-1 justify-end">
-                        <span className={`text-lg font-bold w-12 text-right transition-all ${comparison.winner === 1 ? 'text-blue-600 dark:text-blue-400 scale-110' : 'text-slate-400 dark:text-slate-500'}`}>
-                            {val1}
-                        </span>
+  const handleClearFilters = useCallback(() => {
+    setSearchTerm('');
+    setSelectedType('all');
+    setShowOnlyFavorites(false);
+    setCurrentPage(1);
+  }, []);
 
-                        {/* Indicador de diferença */}
-                        {comparison.winner !== 0 && (
-                            <div className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${comparison.winner === 1
-                                    ? 'bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300'
-                                    : 'bg-purple-100 dark:bg-purple-900/40 text-purple-700 dark:text-purple-300'
-                                }`}>
-                                {comparison.winner === 1 ? <TrendingUp size={10} /> : <TrendingDown size={10} />}
-                                +{comparison.diff} ({comparison.percent}%)
-                            </div>
-                        )}
-                        {comparison.winner === 0 && (
-                            <span className="text-slate-400 dark:text-slate-500 text-xs">
-                                <Minus size={12} />
-                            </span>
-                        )}
+  return (
+    <>
+      {showIntro && <IntroScreen onClose={() => setShowIntro(false)} />}
 
-                        <span className={`text-lg font-bold w-12 text-right transition-all ${comparison.winner === 2 ? 'text-purple-600 dark:text-purple-400 scale-110' : 'text-slate-400 dark:text-slate-500'}`}>
-                            {val2}
-                        </span>
-                    </div>
-                </div>
-
-                {/* Barras Sobrepostas */}
-                <div className="relative h-10 bg-slate-100 dark:bg-slate-700 rounded-xl overflow-hidden shadow-inner">
-                    {/* Barra Base (menor valor) */}
-                    <div
-                        className={`absolute top-0 left-0 h-full ${barColor} opacity-40 transition-all duration-700 ease-out`}
-                        style={{ width: `${Math.max(width1, width2)}%` }}
-                    />
-
-                    {/* Barra Player 1 */}
-                    <div
-                        className={`absolute top-0 left-0 h-full bg-gradient-to-r from-blue-500 to-blue-400 transition-all duration-700 ease-out flex items-center justify-end pr-2 ${comparison.winner === 1 ? 'opacity-100 shadow-lg shadow-blue-500/30' : 'opacity-80'
-                            }`}
-                        style={{ width: `${width1}%` }}
-                    >
-                        {comparison.winner === 1 && <Crown size={14} className="text-white drop-shadow-md" />}
-                    </div>
-
-                    {/* Barra Player 2 */}
-                    <div
-                        className={`absolute top-0 left-0 h-full bg-gradient-to-r from-purple-500 to-purple-400 transition-all duration-700 ease-out flex items-center justify-end pr-2 ${comparison.winner === 2 ? 'opacity-100 shadow-lg shadow-purple-500/30' : 'opacity-80'
-                            }`}
-                        style={{ width: `${width2}%` }}
-                    >
-                        {comparison.winner === 2 && <Crown size={14} className="text-white drop-shadow-md" />}
-                    </div>
-
-                    {/* Linha de empate visual */}
-                    {comparison.winner === 0 && (
-                        <div className="absolute inset-0 flex items-center justify-center">
-                            <div className="bg-white/50 dark:bg-black/50 px-3 py-1 rounded-full text-[10px] font-bold text-slate-600 dark:text-slate-300">
-                                EMPATE
-                            </div>
-                        </div>
-                    )}
-                </div>
-            </div>
-        );
-    };
-
-    const modalContent = (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-sm animate-in fade-in">
-            <div className="relative w-full max-w-4xl bg-white dark:bg-slate-800 rounded-3xl shadow-2xl overflow-hidden animate-in zoom-in-95 border border-slate-200 dark:border-slate-700 max-h-[90vh] flex flex-col">
-
-                {/* Header */}
-                <div className="p-6 border-b border-slate-100 dark:border-slate-700 bg-gradient-to-r from-blue-50 to-purple-50 dark:from-blue-900/20 dark:to-purple-900/20">
-                    <div className="flex justify-between items-center">
-                        <h2 className="text-2xl font-bold flex items-center gap-2 text-slate-800 dark:text-white">
-                            <Trophy className="text-yellow-500" size={24} />
-                            Comparativo Estratégico
-                        </h2>
-                        <button onClick={onClose} className="p-2 hover:bg-white/50 dark:hover:bg-slate-700 rounded-full transition">
-                            <X size={20} className="text-slate-500" />
-                        </button>
-                    </div>
-
-                    {/* Total Stats */}
-                    <div className="mt-4 flex justify-center gap-8">
-                        <div className={`text-center px-6 py-3 rounded-xl transition-all ${total1 > total2 ? 'bg-blue-100 dark:bg-blue-900/40 ring-2 ring-blue-500 scale-105' : 'bg-slate-100 dark:bg-slate-700'}`}>
-                            <p className="text-xs uppercase font-bold text-slate-400 mb-1">Total {p1.name}</p>
-                            <p className={`text-2xl font-extrabold ${total1 > total2 ? 'text-blue-600 dark:text-blue-400' : 'text-slate-600 dark:text-slate-300'}`}>
-                                {total1}
-                            </p>
-                        </div>
-                        <div className="flex items-center">
-                            <span className="text-2xl font-bold text-slate-300 dark:text-slate-600">VS</span>
-                        </div>
-                        <div className={`text-center px-6 py-3 rounded-xl transition-all ${total2 > total1 ? 'bg-purple-100 dark:bg-purple-900/40 ring-2 ring-purple-500 scale-105' : 'bg-slate-100 dark:bg-slate-700'}`}>
-                            <p className="text-xs uppercase font-bold text-slate-400 mb-1">Total {p2.name}</p>
-                            <p className={`text-2xl font-extrabold ${total2 > total1 ? 'text-purple-600 dark:text-purple-400' : 'text-slate-600 dark:text-slate-300'}`}>
-                                {total2}
-                            </p>
-                        </div>
-                    </div>
-
-                    {winner && (
-                        <div className="mt-3 text-center">
-                            <span className="inline-flex items-center gap-2 px-4 py-1.5 bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400 rounded-full text-sm font-bold">
-                                <Trophy size={14} />
-                                {winner.name} tem vantagem geral!
-                            </span>
-                        </div>
-                    )}
-                </div>
-
-                {/* Content Scrollable */}
-                <div className="overflow-y-auto p-6 flex-1">
-                    <div className="grid grid-cols-2 gap-6 mb-8">
-                        {/* Pokemon 1 */}
-                        <div className="text-center space-y-4">
-                            <div className="relative">
-                                <div className="h-48 bg-gradient-to-b from-blue-50 to-blue-100 dark:from-blue-900/30 dark:to-blue-900/10 rounded-2xl flex items-center justify-center p-4 border-2 border-blue-200 dark:border-blue-800">
-                                    <img src={p1.sprites.other.dream_world.front_default || p1.sprites.front_default} className="h-40 object-contain drop-shadow-xl" />
-                                </div>
-                                {total1 > total2 && (
-                                    <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-blue-500 text-white px-3 py-1 rounded-full text-xs font-bold shadow-lg">
-                                        Vencedor
-                                    </div>
-                                )}
-                            </div>
-                            <div>
-                                <h3 className="text-2xl font-bold capitalize text-blue-600 dark:text-blue-400">{p1.name}</h3>
-                                <p className="text-slate-400 text-sm font-mono">#{String(p1.id).padStart(3, '0')}</p>
-                                <div className="flex justify-center gap-1 mt-2">
-                                    {p1.types.map(t => (
-                                        <span key={t.type.name} className="px-2 py-0.5 bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 rounded text-[10px] font-bold uppercase">
-                                            {t.type.name}
-                                        </span>
-                                    ))}
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* Pokemon 2 */}
-                        <div className="text-center space-y-4">
-                            <div className="relative">
-                                <div className="h-48 bg-gradient-to-b from-purple-50 to-purple-100 dark:from-purple-900/30 dark:to-purple-900/10 rounded-2xl flex items-center justify-center p-4 border-2 border-purple-200 dark:border-purple-800">
-                                    <img src={p2.sprites.other.dream_world.front_default || p2.sprites.front_default} className="h-40 object-contain drop-shadow-xl" />
-                                </div>
-                                {total2 > total1 && (
-                                    <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-purple-500 text-white px-3 py-1 rounded-full text-xs font-bold shadow-lg">
-                                        Vencedor
-                                    </div>
-                                )}
-                            </div>
-                            <div>
-                                <h3 className="text-2xl font-bold capitalize text-purple-600 dark:text-purple-400">{p2.name}</h3>
-                                <p className="text-slate-400 text-sm font-mono">#{String(p2.id).padStart(3, '0')}</p>
-                                <div className="flex justify-center gap-1 mt-2">
-                                    {p2.types.map(t => (
-                                        <span key={t.type.name} className="px-2 py-0.5 bg-purple-100 dark:bg-purple-900/40 text-purple-700 dark:text-purple-300 rounded text-[10px] font-bold uppercase">
-                                            {t.type.name}
-                                        </span>
-                                    ))}
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* Stats Comparison - Versão Premium */}
-                    <div className="bg-slate-50 dark:bg-slate-700/30 p-6 rounded-2xl border border-slate-200 dark:border-slate-600">
-                        <h4 className="text-center font-bold uppercase text-sm text-slate-400 mb-6 flex items-center justify-center gap-2">
-                            <TrendingUp size={16} /> Análise de Base Stats
-                        </h4>
-                        {p1.stats.map((s, i) => {
-                            const statNameMap: Record<string, string> = {
-                                hp: 'HP', attack: 'Ataque', defense: 'Defesa',
-                                'special-attack': 'Atq. Esp.', 'special-defense': 'Def. Esp.', speed: 'Velocidade'
-                            };
-                            const label = statNameMap[s.stat.name] || s.stat.name;
-                            const val2 = p2.stats[i]?.base_stat || 0;
-                            return renderOverlappingBars(label, s.base_stat, val2);
-                        })}
-                    </div>
-
-                    {/* Physical Info */}
-                    <div className="mt-6 grid grid-cols-2 gap-6">
-                        <div className="bg-gradient-to-br from-blue-50 to-blue-100 dark:from-blue-900/20 dark:to-blue-900/10 p-4 rounded-xl border border-blue-200 dark:border-blue-800">
-                            <div className="grid grid-cols-2 gap-4 text-center">
-                                <div>
-                                    <p className="text-xs text-slate-400 uppercase font-bold mb-1">Altura</p>
-                                    <p className={`text-xl font-bold ${p1.height > p2.height ? 'text-blue-600 dark:text-blue-400' : 'text-slate-600 dark:text-slate-300'}`}>
-                                        {p1.height / 10}m
-                                    </p>
-                                </div>
-                                <div>
-                                    <p className="text-xs text-slate-400 uppercase font-bold mb-1">Peso</p>
-                                    <p className={`text-xl font-bold ${p1.weight > p2.weight ? 'text-blue-600 dark:text-blue-400' : 'text-slate-600 dark:text-slate-300'}`}>
-                                        {p1.weight / 10}kg
-                                    </p>
-                                </div>
-                            </div>
-                        </div>
-                        <div className="bg-gradient-to-br from-purple-50 to-purple-100 dark:from-purple-900/20 dark:to-purple-900/10 p-4 rounded-xl border border-purple-200 dark:border-purple-800">
-                            <div className="grid grid-cols-2 gap-4 text-center">
-                                <div>
-                                    <p className="text-xs text-slate-400 uppercase font-bold mb-1">Altura</p>
-                                    <p className={`text-xl font-bold ${p2.height > p1.height ? 'text-purple-600 dark:text-purple-400' : 'text-slate-600 dark:text-slate-300'}`}>
-                                        {p2.height / 10}m
-                                    </p>
-                                </div>
-                                <div>
-                                    <p className="text-xs text-slate-400 uppercase font-bold mb-1">Peso</p>
-                                    <p className={`text-xl font-bold ${p2.weight > p1.weight ? 'text-purple-600 dark:text-purple-400' : 'text-slate-600 dark:text-slate-300'}`}>
-                                        {p2.weight / 10}kg
-                                    </p>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
+      <div className="min-h-screen bg-surface text-text-primary transition-colors duration-300 relative pb-24 lg:pb-20">
+        <div className="fixed top-3 right-3 sm:top-6 sm:right-6 z-50 flex items-center gap-2 sm:gap-3">
+          <button
+            onClick={() => setShowIntro(true)}
+            className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 sm:py-2.5 rounded-full bg-gradient-to-r from-brand-500 to-brand-600 text-white text-sm font-semibold shadow-lg shadow-brand-500/30 hover:shadow-brand-500/50 hover:scale-105 active:scale-95 transition-all"
+            aria-label="Assistir Abertura Novamente"
+          >
+            <PlayCircle size={16} className="sm:size-[18px]" />
+            <span className="hidden sm:inline">Abertura</span>
+          </button>
+          <ThemeToggle theme={theme} onToggle={toggleTheme} />
         </div>
-    );
 
-    return createPortal(modalContent, document.body);
+        <header className="pt-12 sm:pt-16 pb-6 sm:pb-8 text-center container-px">
+          <h1 className="text-3xl sm:text-4xl md:text-5xl font-extrabold tracking-tight text-text-primary flex items-center justify-center gap-3">
+            <span className="bg-gradient-to-r from-brand-500 to-brand-600 bg-clip-text text-transparent">
+              Pokédex
+            </span>
+            <span className="text-text-primary">Pro</span>
+          </h1>
+
+          <p className="mt-2 text-sm sm:text-base text-text-secondary max-w-md mx-auto">
+            Explore os 151 Pokémon da região de Kanto
+          </p>
+
+          <div className="mt-4 sm:mt-6 flex justify-center">
+            <div className="inline-flex bg-surface-secondary p-1 rounded-xl border border-border">
+              <button
+                onClick={() => setActiveTab('pokedex')}
+                className={`flex items-center gap-2 px-4 sm:px-6 py-2.5 rounded-lg text-sm font-medium transition-all ${
+                  activeTab === 'pokedex'
+                    ? 'bg-brand-500 text-white shadow-md'
+                    : 'text-text-secondary hover:text-text-primary'
+                }`}
+                aria-pressed={activeTab === 'pokedex'}
+              >
+                <List size={16} /> Pokédex
+              </button>
+              <button
+                onClick={() => setActiveTab('calculator')}
+                className={`flex items-center gap-2 px-4 sm:px-6 py-2.5 rounded-lg text-sm font-medium transition-all ${
+                  activeTab === 'calculator'
+                    ? 'bg-brand-500 text-white shadow-md'
+                    : 'text-text-secondary hover:text-text-primary'
+                }`}
+                aria-pressed={activeTab === 'calculator'}
+              >
+                <Calculator size={16} /> Calculadora
+              </button>
+            </div>
+          </div>
+        </header>
+
+        {activeTab === 'pokedex' ? (
+          <div className="animate-fade-in">
+            <div className="container-px max-w-7xl mx-auto space-y-4 mb-6 sm:mb-8">
+              <SearchBar onSearch={setSearchTerm} />
+
+              <div className="hidden sm:block">
+                <TypeFilter selectedType={selectedType} onTypeChange={setSelectedType} />
+              </div>
+
+              <div className="flex items-center justify-between gap-3">
+                <button
+                  onClick={() => setShowMobileFilters(!showMobileFilters)}
+                  className="sm:hidden flex items-center gap-2 px-4 py-2.5 rounded-xl bg-surface border border-border text-sm font-medium text-text-secondary hover:bg-surface-hover transition-all"
+                  aria-expanded={showMobileFilters}
+                  aria-label="Filtrar por tipo"
+                >
+                  <Filter size={16} /> Tipo <ChevronDown size={14} className={`transition-transform ${showMobileFilters ? 'rotate-180' : ''}`} />
+                </button>
+
+                <div className="flex items-center gap-2 sm:gap-3">
+                  <button
+                    onClick={() => setShowOnlyFavorites(!showOnlyFavorites)}
+                    className={`flex items-center gap-2 px-3 sm:px-4 py-2.5 rounded-xl font-medium text-sm transition-all ${
+                      showOnlyFavorites
+                        ? 'bg-red-500 text-white shadow-lg shadow-red-500/30'
+                        : 'bg-surface border border-border text-text-secondary hover:bg-surface-hover'
+                    }`}
+                    aria-pressed={showOnlyFavorites}
+                  >
+                    <Heart size={16} fill={showOnlyFavorites ? 'currentColor' : 'none'} />
+                    <span className="hidden xs:inline">{showOnlyFavorites ? 'Favoritos' : 'Favoritos'}</span>
+                  </button>
+
+                  {(searchTerm || selectedType !== 'all' || showOnlyFavorites) && (
+                    <button
+                      onClick={handleClearFilters}
+                      className="flex items-center gap-2 px-3 py-2.5 rounded-xl bg-surface border border-border text-text-tertiary hover:text-text-secondary hover:bg-surface-hover transition-all text-sm"
+                      aria-label="Limpar filtros"
+                    >
+                      <X size={16} />
+                      <span className="hidden sm:inline">Limpar</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {showMobileFilters && (
+                <div className="sm:hidden animate-slide-up">
+                  <TypeFilter selectedType={selectedType} onTypeChange={setSelectedType} />
+                </div>
+              )}
+            </div>
+
+            {error && (
+              <div className="container-px max-w-7xl mx-auto mb-6" role="alert">
+                <div className="rounded-xl bg-red-50 dark:bg-red-900/20 p-4 text-center text-red-600 dark:text-red-400 border border-red-100 dark:border-red-800">
+                  ⚠️ {error}
+                </div>
+              </div>
+            )}
+
+            <main className="container-px max-w-7xl mx-auto">
+              <div className="grid grid-cols-1 xs:grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 sm:gap-4 md:gap-5">
+                {loading ? (
+                  Array.from({ length: ITEMS_PER_PAGE }).map((_, i) => <SkeletonCard key={i} />)
+                ) : !isNoResults ? (
+                  paginatedPokemons.map((poke, i) => (
+                    <div key={poke.id} className="animate-slide-up" style={{ animationDelay: `${(i % ITEMS_PER_PAGE) * 30}ms` }}>
+                      <PokemonCard
+                        id={poke.id}
+                        name={poke.name}
+                        type={poke.types[0]?.type.name || 'normal'}
+                        image={poke.sprites.other.dream_world.front_default || poke.sprites.front_default}
+                        isFavorite={isFavorite(poke.id)}
+                        onToggleFavorite={() => toggleFavorite(poke.id)}
+                        onClick={() => setSelectedPokemon(poke)}
+                        isComparing={isComparing(poke.id)}
+                        onToggleCompare={() => toggleCompare(poke)}
+                        gradient={typeGradients[poke.types[0]?.type.name || 'normal']}
+                      />
+                    </div>
+                  ))
+                ) : (
+                  <div className="col-span-full flex flex-col items-center justify-center py-16 sm:py-24 text-center">
+                    <div className={`inline-flex items-center justify-center w-16 h-16 sm:w-20 sm:h-20 rounded-2xl mb-4 sm:mb-6 ${
+                      isFavoritesEmpty
+                        ? 'bg-red-50 dark:bg-red-900/20 text-red-400'
+                        : 'bg-surface-secondary text-text-tertiary'
+                    }`}>
+                      <Heart size={32} className="sm:size-[36px]" />
+                    </div>
+                    <h3 className="text-text-primary font-semibold text-lg sm:text-xl mb-2">
+                      {isFavoritesEmpty ? 'Nenhum favorito ainda' : 'Nenhum Pokémon encontrado'}
+                    </h3>
+                    <p className="text-text-secondary text-sm mb-4 sm:mb-6 max-w-xs">
+                      {isFavoritesEmpty
+                        ? 'Clique no coração nos cards para adicionar seus Pokémon favoritos.'
+                        : 'Tente ajustar sua busca ou limpar os filtros.'}
+                    </p>
+                    <button
+                      onClick={handleClearFilters}
+                      className="inline-flex items-center gap-2 px-5 sm:px-6 py-2.5 sm:py-3 bg-text-primary text-surface rounded-xl font-medium hover:opacity-90 transition-all shadow-lg"
+                    >
+                      <Filter size={18} /> Limpar filtros
+                    </button>
+                  </div>
+                )}
+              </div>
+            </main>
+
+            {!loading && filteredPokemons.length > 0 && (
+              <div className="container-px max-w-7xl mx-auto">
+                <Pagination currentPage={currentPage} totalPages={totalPages} onPageChange={setCurrentPage} />
+                <p className="text-center text-sm text-text-tertiary mt-3 sm:mt-4">
+                  Página {currentPage} de {totalPages} &middot; {paginatedPokemons.length} Pokémon
+                </p>
+              </div>
+            )}
+
+            {selectedPokemon && (
+              <PokemonModal
+                pokemon={selectedPokemon}
+                onClose={() => setSelectedPokemon(null)}
+                onPokemonChange={setSelectedPokemon}
+              />
+            )}
+          </div>
+        ) : (
+          <div className="animate-fade-in">
+            <TypeCalculator />
+          </div>
+        )}
+
+        {compareList.length > 0 && (
+          <div className="fixed bottom-4 sm:bottom-6 left-1/2 -translate-x-1/2 z-50 bg-surface rounded-full shadow-2xl border border-border p-1.5 sm:p-2 flex items-center gap-1 sm:gap-2 animate-slide-up max-w-[95vw] sm:max-w-none">
+            <div className="flex items-center gap-1.5 sm:gap-2 pl-2 sm:pl-3">
+              <Swords size={16} className="sm:size-[18px] text-brand-500 shrink-0" />
+              <span className="text-xs sm:text-sm font-bold text-text-primary whitespace-nowrap">
+                {compareList.length}/2
+              </span>
+            </div>
+            <div className="w-px h-5 sm:h-6 bg-border mx-0.5 sm:mx-1" />
+            <div className="flex items-center gap-1 sm:gap-2">
+              {compareList.map(p => (
+                <div key={p.id} className="relative group">
+                  <img
+                    src={p.sprites.other.dream_world.front_default || p.sprites.front_default}
+                    alt={p.name}
+                    className="w-8 h-8 sm:w-10 sm:h-10 object-contain"
+                  />
+                  <button
+                    onClick={() => toggleCompare(p)}
+                    className="absolute -top-1 -right-1 bg-red-500 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+                    aria-label={`Remover ${p.name} da comparação`}
+                  >
+                    <X size={10} />
+                  </button>
+                </div>
+              ))}
+            </div>
+            <button
+              onClick={() => setShowCompare(true)}
+              disabled={compareList.length < 2}
+              className={`px-3 sm:px-4 py-1.5 sm:py-2 rounded-full text-xs sm:text-sm font-bold transition-all ${
+                compareList.length >= 2
+                  ? 'bg-brand-500 text-white hover:bg-brand-600 shadow-lg shadow-brand-500/30'
+                  : 'bg-surface-secondary text-text-tertiary cursor-not-allowed'
+              }`}
+            >
+              Comparar
+            </button>
+            <button
+              onClick={clearCompare}
+              className="p-1.5 sm:p-2 hover:bg-surface-hover rounded-full text-text-tertiary hover:text-text-secondary transition-all"
+              aria-label="Limpar comparação"
+            >
+              <X size={14} className="sm:size-[16px]" />
+            </button>
+          </div>
+        )}
+
+        {showCompare && (
+          <CompareView list={compareList} onClose={() => setShowCompare(false)} />
+        )}
+      </div>
+    </>
+  );
 }
+
+export default App;
