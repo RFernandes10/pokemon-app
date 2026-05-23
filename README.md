@@ -1,5 +1,11 @@
 # Pokemon App
 
+> **Live Demo:** [rfernandes10.github.io/pokemon-app](https://rfernandes10.github.io/pokemon-app/)
+
+<p align="center">
+  <img src="https://github.com/RFernandes10/pokemon-app/raw/main/screenshot.png" alt="Pokémon App Preview" width="100%" />
+</p>
+
 Aplicação interativa de busca e visualização de Pokémon com React, TypeScript e Vite. Explore Pokémon por tipo, compare stats, veja evoluções e muito mais!
 
 ## Funcionalidades
